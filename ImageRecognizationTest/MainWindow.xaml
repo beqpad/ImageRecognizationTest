@@ -1,0 +1,9 @@
+﻿<Window x:Class="ImageRecognizationTest.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="洗濯タグ認識" Height="350" Width="525">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" DragEnter="Grid_DragEnter" DragLeave="Grid_DragLeave" Drop="Grid_Drop">
+    </ScrollViewer>
+</Window>
+    
