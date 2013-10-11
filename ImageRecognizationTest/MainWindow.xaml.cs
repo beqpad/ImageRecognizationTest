@@ -49,7 +49,7 @@ namespace ImageRecognizationTest
         private IEnumerable<string> RecognizeImiage(string filePath)
         {
             // TODO ここに、画像認識コードを入れてください。
-            yield return "認識できません";
+            yield return filePath + "\n認識できません";
         }
     }
 }

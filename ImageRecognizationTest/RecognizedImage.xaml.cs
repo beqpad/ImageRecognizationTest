@@ -44,7 +44,7 @@ namespace ImageRecognizationTest
                     _image.Source = image;
                     _uriSource = value;
                 }
-                catch (NotSupportedException)
+                catch
                 {
                 }
 
