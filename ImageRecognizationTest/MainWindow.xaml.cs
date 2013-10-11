@@ -15,6 +15,7 @@ using System.Windows.Shapes;
 
 namespace ImageRecognizationTest
 {
+
     /// <summary>
     /// MainWindow.xaml の相互作用ロジック
     /// </summary>
@@ -25,19 +26,30 @@ namespace ImageRecognizationTest
             InitializeComponent();
         }
 
-        private void Grid_DragEnter(object sender, DragEventArgs e)
+        private void ListView_Drop(object sender, DragEventArgs e)
         {
+            if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
 
+            var filePaths = (string[])e.Data.GetData(DataFormats.FileDrop);
+
+            this.imageList.ItemsSource = filePaths.Select(filePath => {
+                var marks = RecognizeImiage(filePath);
+
+                string text = "";
+                marks.All(m => { text += m; return true; });
+
+                return new RecognizedImage
+                {
+                    Text = text,
+                    ImagePath = filePath,
+                };
+            });
         }
 
-        private void Grid_DragLeave(object sender, DragEventArgs e)
+        private IEnumerable<string> RecognizeImiage(string filePath)
         {
-
-        }
-
-        private void Grid_Drop(object sender, DragEventArgs e)
-        {
-
+            // TODO ここに、画像認識コードを入れてください。
+            yield return "認識できません";
         }
     }
 }
