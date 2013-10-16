@@ -26,6 +26,8 @@ namespace ImageRecognizationTest
             InitializeComponent();
         }
 
+
+
         private void ListView_Drop(object sender, DragEventArgs e)
         {
             if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
@@ -46,10 +48,12 @@ namespace ImageRecognizationTest
             });
         }
 
+
+
         private IEnumerable<string> RecognizeImiage(string filePath)
         {
             // TODO ここに、画像認識コードを入れてください。
-            yield return filePath + "\n認識できません";
+            yield return filePath + "\n" + WashTagRecognize.Recognize(filePath);
         }
     }
 }
