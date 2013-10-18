@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 using OpenCvSharp;
 using OpenCvSharp.CPlusPlus;
 
@@ -10,13 +9,36 @@ namespace ImageRecognizationTest
 {
     static class WashTagRecognize
     {
-        public static String Recognize(String path)
+        private static WashTagDictionary washTagDictionary = new WashTagDictionary();
+
+        private class SURFResult
         {
-            Stack<String> results = new Stack<string>();
+            public List<CvSURFPoint> findPointList;
+            public CvSize templateSize;
+            public CvPoint[] dstCorners;
+
+            public SURFResult()
+            {
+                this.findPointList = new List<CvSURFPoint>();
+            }
+        }
+
+
+        /// <summary>
+        /// 認識処理を行う
+        /// </summary>
+        /// <param name="imagePath">認識対象の画像パス</param>
+        /// <param name="isDebug">デバッグモード</param>
+        /// <returns></returns>
+        public static String Recognize(String imagePath, bool isDebug = false)
+        {
+
+            List<String> results = new List<string>();
 
             // 検出対象の画像を読み込み
-            using (IplImage src = new IplImage(path, LoadMode.GrayScale))
-            using (IplImage tmp = new IplImage(src.Size, BitDepth.U8, 1))
+            IplImage src = new IplImage(imagePath, LoadMode.GrayScale);
+
+            using (IplImage tmpImage = new IplImage(src.Size, BitDepth.U8, 1))
             {
                 // 1)検出前処理
                 
@@ -25,37 +47,102 @@ namespace ImageRecognizationTest
 
                 // 大津の手法による二値化処理
                 // 大津, "判別および最小２乗基準に基づく自動しきい値選定法", 電子通信学会論文誌, Vol.J63-D, No.4, pp.349-356, 1980. 
-                src.Threshold(tmp, 200, 250, ThresholdType.Otsu);
+                src.Threshold(tmpImage, 200, 250, ThresholdType.Otsu);
 
                 src.Dispose();
 
-                SURFSample(path, @"answer\101.png");
-                SURFSample(path, @"answer\102.png");
-                SURFSample(path, @"answer\103.png");
-                SURFSample(path, @"answer\104.png");
-                SURFSample(path, @"answer\105.png");
-                SURFSample(path, @"answer\106.png");
-                SURFSample(path, @"answer\107.png");
-                SURFSample(path, @"answer\201.png");
-                SURFSample(path, @"answer\202.png");
-                SURFSample(path, @"answer\301.png");
-                SURFSample(path, @"answer\302.png");
-                SURFSample(path, @"answer\303.png");
-                SURFSample(path, @"answer\304.png");
+                Dictionary<int, List<double>> shapeMatchResults = new Dictionary<int, List<double>>();
 
-
-                // 2) 検出処理
-                //Parallel.ForEach()
-                
-                // 3) 検出候補の評価（Huモーメントによる形状マッチング[回転・スケーリング・反転]）
-                //Cv.MatchShapes()
-                
-                
-
-
-                using (CvWindow win = new CvWindow("image", tmp))
+                List<string> answerFileNames = washTagDictionary.Keys.ToList();
+                foreach (var answerFileName in answerFileNames)
                 {
-                    CvWindow.WaitKey();
+                    var washTagInfo = washTagDictionary[answerFileName];
+                    var answerImagePath = String.Format(@"answer\{0}.png", answerFileName);
+
+                    // 2) 検出処理
+                    var resultSURF = SURF(tmpImage, answerImagePath, isDebug);
+
+
+                    // 3) 検出候補の評価
+                    string result = null;
+                    
+
+                    // その１：頂点がある場合
+                    if (resultSURF.dstCorners != null)
+                    {
+                        // TODO:平面評価
+                        //result = fileBaseName + " : " + washTagDictionary[fileBaseName];
+                    }
+
+                    // その２：形状マッチング
+                    if (result == null && resultSURF.findPointList.Count > 0)
+                    {
+                        // ROIの1辺は、横に4つ位入る大きさで（何となくｗ）
+                        CvSize roiSize = new CvSize(tmpImage.Width / 4, tmpImage.Width / 4);
+
+                        List<double> matchResults = new List<double>();
+                        foreach (var findPoint in resultSURF.findPointList)
+	                    {
+                            // ROIを設定
+                            tmpImage.SetROI(
+                                (int)findPoint.Pt.X - roiSize.Width / 2,
+                                (int)findPoint.Pt.Y - roiSize.Height / 2,
+                                roiSize.Width, roiSize.Height
+                            );
+                		    // Huモーメントによる形状マッチング [回転・スケーリング・反転に強い]
+                            matchResults.Add(
+                                CompareShapeMoment(tmpImage, answerImagePath, MatchShapesMethod.I1)
+                            );
+                            // ROIをリセット
+                            tmpImage.ResetROI();
+	                    }
+
+                        
+                        // 閾値以下だった場合に検出と見なす
+                        if (matchResults.Min() < 0.005)
+                        {
+                            // カテゴリに値が無ければ確保
+                            if (shapeMatchResults.ContainsKey(washTagInfo.CategoryNo) == false)
+                            {
+                                shapeMatchResults.Add(washTagInfo.CategoryNo, new List<double>());
+                            }
+
+                            shapeMatchResults[washTagInfo.CategoryNo].Add(matchResults.Min());
+                        }
+                    }
+                }
+
+
+                // 4)認識結果の整理
+                foreach (var categoryNo in shapeMatchResults.Keys)
+                {
+                    var matchResult = shapeMatchResults[categoryNo];
+
+                    var min = matchResult.Min();
+                    var index = matchResult.FindIndex((x) =>
+                    {
+                        return x == min;
+                    });
+
+                    var id = String.Format("{0:0}{1:00}", categoryNo, index + 1);
+                    var recognitionWashTag = washTagDictionary[id];
+
+                    // 結果を格納
+                    results.Add(
+                        String.Format(isDebug ? "{0} : {1} ({2})" : "{0} : {1}", id, recognitionWashTag.Description, min)
+                    );
+                    
+                }
+
+                
+
+                // デバッグ表示
+                if (isDebug)
+                {
+                    using (CvWindow win = new CvWindow("image", tmpImage))
+                    {
+                        CvWindow.WaitKey();
+                    }
                 }
             }
 
@@ -90,44 +177,63 @@ namespace ImageRecognizationTest
         }
 
 
-        private static void SURFSample(String dstPath, String srcPath)
+
+        /// <summary>
+        /// SURFによる検出処理を行う
+        /// </summary>
+        /// <param name="dstPath"></param>
+        /// <param name="srcPath"></param>
+        private static SURFResult SURF(IplImage image, String srcPath, bool isDebug = false)
         {
+            SURFResult result = new SURFResult();
+
             // cvExtractSURF
             // SURFで対応点検出
 
             // call cv::initModule_nonfree() before using SURF/SIFT.
             CvCpp.InitModule_NonFree();
             
-            using (CvMemStorage storage = Cv.CreateMemStorage(0))
             using (IplImage obj = Cv.LoadImage(srcPath, LoadMode.GrayScale))
-            using (IplImage image = Cv.LoadImage(dstPath, LoadMode.GrayScale))
+            //using (IplImage image = Cv.LoadImage(dstPath, LoadMode.GrayScale))
             using (IplImage objColor = Cv.CreateImage(obj.Size, BitDepth.U8, 3))
             using (IplImage correspond = Cv.CreateImage(new CvSize(image.Width, obj.Height + image.Height), BitDepth.U8, 1))
             {
-                Cv.CvtColor(obj, objColor, ColorConversion.GrayToBgr);
+                if (isDebug)
+                {
+                    Cv.CvtColor(obj, objColor, ColorConversion.GrayToBgr);
 
-                Cv.SetImageROI(correspond, new CvRect(0, 0, obj.Width, obj.Height));
-                Cv.Copy(obj, correspond);
-                Cv.SetImageROI(correspond, new CvRect(0, obj.Height, correspond.Width, correspond.Height));
-                Cv.Copy(image, correspond);
-                Cv.ResetImageROI(correspond);
-                
+                    Cv.SetImageROI(correspond, new CvRect(0, 0, obj.Width, obj.Height));
+                    Cv.Copy(obj, correspond);
+                    Cv.SetImageROI(correspond, new CvRect(0, obj.Height, correspond.Width, correspond.Height));
+                    Cv.Copy(image, correspond);
+                    Cv.ResetImageROI(correspond);
+                }
+
+                // テンプレート画像の記録
+                result.templateSize = obj.GetSize();
+
 
                 // SURFの処理
                 CvSeq<CvSURFPoint> objectKeypoints, imageKeypoints;
                 CvSeq<IntPtr> objectDescriptors, imageDescriptors;
                 System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
                 {
-                    CvSURFParams param = new CvSURFParams(1000, true);
-                    Cv.ExtractSURF(obj, null, out objectKeypoints, out objectDescriptors, storage, param);
-                    Console.WriteLine("Object Descriptors: {0}", objectDescriptors.Total);
-                    Cv.ExtractSURF(image, null, out imageKeypoints, out imageDescriptors, storage, param);
-                    Console.WriteLine("Image Descriptors: {0}", imageDescriptors.Total);
+                    using (CvMemStorage storage = Cv.CreateMemStorage(0))
+                    {
+                        //CvSURFParams param = new CvSURFParams(20, true);
+
+                        Cv.ExtractSURF(obj, null, out objectKeypoints, out objectDescriptors, storage, new CvSURFParams(20, true));
+                        Console.WriteLine("Object Descriptors: {0}", objectDescriptors.Total);
+
+                        Cv.ExtractSURF(image, null, out imageKeypoints, out imageDescriptors, storage, new CvSURFParams(20000, true));
+                        Console.WriteLine("Image Descriptors: {0}", imageDescriptors.Total);
+                    }
                 }
                 watch.Stop();
                 Console.WriteLine("Extraction time = {0}ms", watch.ElapsedMilliseconds);
                 watch.Reset();
                 watch.Start();
+
 
                 // シーン画像にある局所画像の領域を線で囲む
                 //CvPoint[] srcCorners = new CvPoint[4]{
@@ -136,27 +242,46 @@ namespace ImageRecognizationTest
                 //    new CvPoint(obj.Width, obj.Height), 
                 //    new CvPoint(0, obj.Height)
                 //};
-                //CvPoint[] dstCorners = LocatePlanarObject(objectKeypoints, objectDescriptors, imageKeypoints, imageDescriptors, srcCorners); 
+                //CvPoint[] dstCorners = LocatePlanarObject(
+                //    objectKeypoints, objectDescriptors, 
+                //    imageKeypoints, imageDescriptors, 
+                //    srcCorners
+                //);
                 //if (dstCorners != null)
                 //{
+                //    // 検出した領域の頂点
+                //    result.dstCorners = dstCorners;
+
                 //    for (int i = 0; i < 4; i++)
                 //    {
                 //        CvPoint r1 = dstCorners[i % 4];
                 //        CvPoint r2 = dstCorners[(i + 1) % 4];
-                //        Cv.Line(correspond, new CvPoint(r1.X, r1.Y + obj.Height), new CvPoint(r2.X, r2.Y + obj.Height), CvColor.Blue);
+                //        if (isDebug)
+                //        {
+                //            Cv.Line(correspond, new CvPoint(r1.X, r1.Y + obj.Height), new CvPoint(r2.X, r2.Y + obj.Height), CvColor.Black);
+                //        }
                 //    }
                 //}
+
                 
                 // 対応点同士を線で引く
-                int[] ptpairs = FindPairs(objectKeypoints, objectDescriptors, imageKeypoints, imageDescriptors);
-                for (int i = 0; i < ptpairs.Length; i += 2)
+                int[] ptPairs = FindPairs(objectKeypoints, objectDescriptors, imageKeypoints, imageDescriptors);
+                for (int i = 0; i < ptPairs.Length; i += 2)
                 {
-                    CvSURFPoint r1 = Cv.GetSeqElem<CvSURFPoint>(objectKeypoints, ptpairs[i]).Value;
-                    CvSURFPoint r2 = Cv.GetSeqElem<CvSURFPoint>(imageKeypoints, ptpairs[i + 1]).Value;
-                    Cv.Line(correspond, r1.Pt, new CvPoint(Cv.Round(r2.Pt.X), Cv.Round(r2.Pt.Y + obj.Height)), CvColor.Black);
+                    CvSURFPoint r1 = Cv.GetSeqElem<CvSURFPoint>(objectKeypoints, ptPairs[i]).Value;
+                    CvSURFPoint r2 = Cv.GetSeqElem<CvSURFPoint>(imageKeypoints, ptPairs[i + 1]).Value;
+
+                    // 対応点を格納
+                    result.findPointList.Add(r2);
+
+                    if (isDebug)
+                    {
+                        Cv.Line(correspond, r1.Pt, new CvPoint(Cv.Round(r2.Pt.X), Cv.Round(r2.Pt.Y + obj.Height)), CvColor.Black);
+                    }
                 }                
 
-                // 特徴点の場所に円を描く
+
+                //// 特徴点の場所に円を描く
                 //for (int i = 0; i < objectKeypoints.Total; i++)
                 //{
                 //    CvSURFPoint r = Cv.GetSeqElem<CvSURFPoint>(objectKeypoints, i).Value;
@@ -164,24 +289,49 @@ namespace ImageRecognizationTest
                 //    int radius = Cv.Round(r.Size * (1.2 / 9.0) * 2);
                 //    Cv.Circle(objColor, center, radius, CvColor.Red, 1, LineType.AntiAlias, 0);
                 //}
+
                 watch.Stop();
                 Console.WriteLine("Drawing time = {0}ms", watch.ElapsedMilliseconds);
 
+
                 // ウィンドウに表示
-                Cv.NamedWindow("Object", WindowMode.AutoSize);
-                Cv.NamedWindow("Object Correspond", WindowMode.AutoSize);
-                Cv.ShowImage("Object Correspond", correspond);
-                Cv.ShowImage("Object", objColor);
-
-                Cv.WaitKey(0);
-
-                Cv.DestroyWindow("Object");
-                Cv.DestroyWindow("Object Correspond");
+                if (isDebug)
+                {
+                    //using (CvWindow winObject = new CvWindow("Object", WindowMode.AutoSize, objColor))
+                    using (CvWindow winCorrespond = new CvWindow("Object Correspond", WindowMode.AutoSize, correspond))
+                    {
+                        CvWindow.WaitKey(0);
+                    }
+                }
             }
+
+            return result;
         }
 
+
+
         /// <summary>
-        /// 
+        /// Huモーメントによる形状比較を行う
+        /// </summary>
+        /// <param name="sourceImage"></param>
+        /// <param name="templateImagePath"></param>
+        /// <returns>比較結果（0.0で完全一致）</returns>
+        private static double CompareShapeMoment(IplImage sourceImage, String templateImagePath, MatchShapesMethod matchShapesMethod = MatchShapesMethod.I1)
+        {
+            double result = 1;
+
+            using (IplImage template = Cv.LoadImage(templateImagePath, LoadMode.GrayScale))
+            {
+                result = Cv.MatchShapes(sourceImage, template, matchShapesMethod);
+            }
+
+            return result;
+        }
+
+
+
+        /// <summary>
+        /// SURFで検出した特徴記述の比較を行う
         /// </summary>
         /// <param name="d1Ptr">Cではconst float*</param>
         /// <param name="d2Ptr">Cではconst float*</param>
@@ -212,8 +362,7 @@ namespace ImageRecognizationTest
                 t2 = d1[i + 2] - d2[i + 2];
                 t3 = d1[i + 3] - d2[i + 3];
                 totalCost += t0 * t0 + t1 * t1 + t2 * t2 + t3 * t3;
-                if (totalCost > best)
-                    break;
+                if (totalCost > best) break;
             }
 
             return totalCost;
@@ -233,52 +382,60 @@ namespace ImageRecognizationTest
             IntPtr vec, int laplacian, 
             CvSeq<CvSURFPoint> model_keypoints, CvSeq<IntPtr> model_descriptors)
         {
+            
             int length = (int)(model_descriptors.ElemSize / sizeof(float));
             int neighbor = -1;
-            double dist1 = 1e6, dist2 = 1e6;
-            CvSeqReader<float> reader = new CvSeqReader<float>();
-            CvSeqReader<CvSURFPoint> kreader = new CvSeqReader<CvSURFPoint>();          
-            Cv.StartReadSeq(model_keypoints, kreader, false);
-            Cv.StartReadSeq(model_descriptors, reader, false);
+            
+            double dist1 = 1e6;
+            double dist2 = 1e6;
 
-            IntPtr mvec;
-            CvSURFPoint kp;
-            double d;
-            for (int i = 0; i < model_descriptors.Total; i++)
+            using(CvSeqReader<float> reader = new CvSeqReader<float>())
+            using (CvSeqReader<CvSURFPoint> kreader = new CvSeqReader<CvSURFPoint>())
             {
-                // const CvSURFPoint* kp = (const CvSURFPoint*)kreader.ptr; が結構曲者。
-                // OpenCvSharpの構造体はFromPtrでポインタからインスタンス生成できるようにしてるので、こう書ける。
-                kp = CvSURFPoint.FromPtr(kreader.Ptr);
-                // まともにキャストする場合はこんな感じか
-                // CvSURFPoint kp = (CvSURFPoint)Marshal.PtrToStructure(kreader.Ptr, typeof(CvSURFPoint));  
+                Cv.StartReadSeq(model_keypoints, kreader, false);
+                Cv.StartReadSeq(model_descriptors, reader, false);
 
-                mvec = reader.Ptr;
-                Cv.NEXT_SEQ_ELEM(kreader.Seq.ElemSize, kreader);
-                Cv.NEXT_SEQ_ELEM(reader.Seq.ElemSize, reader);
-                if (laplacian != kp.Laplacian)
+                IntPtr mvec;
+                CvSURFPoint kp;
+                double d;
+
+
+                for (int i = 0; i < model_descriptors.Total; i++)
                 {
-                    continue;
+                    // const CvSURFPoint* kp = (const CvSURFPoint*)kreader.ptr; が結構曲者。
+                    // OpenCvSharpの構造体はFromPtrでポインタからインスタンス生成できるようにしてるので、こう書ける。
+                    kp = CvSURFPoint.FromPtr(kreader.Ptr);
+
+                    mvec = reader.Ptr;
+                    Cv.NEXT_SEQ_ELEM(kreader.Seq.ElemSize, kreader);
+                    Cv.NEXT_SEQ_ELEM(reader.Seq.ElemSize, reader);
+                    if (laplacian != kp.Laplacian)
+                    {
+                        continue;
+                    }
+
+                    // SURF特徴点の比較を行う
+                    d = CompareSURFDescriptors(vec, mvec, dist2, length);
+                    if (d < dist1)
+                    {
+                        dist2 = dist1;
+                        dist1 = d;
+                        neighbor = i;
+                    }
+                    else if (d < dist2)
+                    {
+                        dist2 = d;
+                    }
                 }
-                d = CompareSURFDescriptors(vec, mvec, dist2, length);
-                if (d < dist1)
-                {
-                    dist2 = dist1;
-                    dist1 = d;
-                    neighbor = i;
-                }
-                else if (d < dist2)
-                    dist2 = d;
             }
-            if (dist1 < 0.6 * dist2)
-                return neighbor;
-            else
-                return -1;
+
+            return (dist1 < dist2 * 0.6) ? neighbor : -1;
         }
 
 
 
         /// <summary>
-        /// 
+        /// 特徴点のペアを見つけて配列として返す
         /// </summary>
         /// <param name="objectKeypoints"></param>
         /// <param name="objectDescriptors"></param>
@@ -289,33 +446,40 @@ namespace ImageRecognizationTest
             CvSeq<CvSURFPoint> objectKeypoints, CvSeq<IntPtr> objectDescriptors, 
             CvSeq<CvSURFPoint> imageKeypoints, CvSeq<IntPtr> imageDescriptors)
         {
-            CvSeqReader<float> reader = new CvSeqReader<float>();
-            CvSeqReader<CvSURFPoint> kreader = new CvSeqReader<CvSURFPoint>();
-            Cv.StartReadSeq(objectDescriptors, reader);
-            Cv.StartReadSeq(objectKeypoints, kreader);
-            
-            List<int> ptpairs = new List<int>();
-            
-            for (int i = 0; i < objectDescriptors.Total; i++)
+            List<int> ptPairs = new List<int>();
+
+            using(CvSeqReader<float> descReader = new CvSeqReader<float>())
+            using (CvSeqReader<CvSURFPoint> keyReader = new CvSeqReader<CvSURFPoint>())
             {
-                CvSURFPoint kp = CvSURFPoint.FromPtr(kreader.Ptr);
-                IntPtr descriptor = reader.Ptr;
-                Cv.NEXT_SEQ_ELEM(kreader.Seq.ElemSize, kreader);
-                Cv.NEXT_SEQ_ELEM(reader.Seq.ElemSize, reader);
-                int nearestNeighbor = NaiveNearestNeighbor(descriptor, kp.Laplacian, imageKeypoints, imageDescriptors);                
-                if (nearestNeighbor >= 0)
+                Cv.StartReadSeq(objectDescriptors, descReader);
+                Cv.StartReadSeq(objectKeypoints, keyReader);
+
+                for (int i = 0; i < objectDescriptors.Total; i++)
                 {
-                    ptpairs.Add(i);
-                    ptpairs.Add(nearestNeighbor);
+                    CvSURFPoint keypoint = CvSURFPoint.FromPtr(keyReader.Ptr);
+                    IntPtr descriptor = descReader.Ptr;
+
+                    Cv.NEXT_SEQ_ELEM(keyReader.Seq.ElemSize, keyReader);
+                    Cv.NEXT_SEQ_ELEM(descReader.Seq.ElemSize, descReader);
+
+                    // 単純な最近傍によって類似度の高い要素を探す
+                    int nearestNeighbor = NaiveNearestNeighbor(descriptor, keypoint.Laplacian, imageKeypoints, imageDescriptors);
+                    if (nearestNeighbor >= 0)
+                    {
+                        ptPairs.Add(i);
+                        ptPairs.Add(nearestNeighbor);
+                    }
                 }
-            } 
-            return ptpairs.ToArray();
+            }
+
+            return ptPairs.ToArray();
         }
 
 
 
+
         /// <summary>
-        /// a rough implementation for object location
+        /// ホモグラフィ行列を求めて、位置と体勢を大まかに算出
         /// </summary>
         /// <param name="objectKeypoints"></param>
         /// <param name="objectDescriptors"></param>
@@ -329,36 +493,51 @@ namespace ImageRecognizationTest
                 CvPoint[] srcCorners)
         {
             CvMat h = new CvMat(3, 3, MatrixType.F64C1);            
-            int[] ptpairs = FindPairs(objectKeypoints, objectDescriptors, imageKeypoints, imageDescriptors);            
-            int n = ptpairs.Length / 2;
-            if (n < 4)
-                return null;
 
+            // ペアを検索
+            int[] ptPairs = FindPairs(objectKeypoints, objectDescriptors, imageKeypoints, imageDescriptors);
+            int n = ptPairs.Length / 2;
+
+            // ペアが4つ以上見つからない場合は透視変換行列を算出出来ないため終了
+            if (n < 4) return null;
+
+
+            // 2枚の画像間の特徴点における透視変換（ホモグラフィ）行列をRANSACアルゴリズムを用いて探す
             CvPoint2D32f[] pt1 = new CvPoint2D32f[n];
             CvPoint2D32f[] pt2 = new CvPoint2D32f[n];
             for (int i = 0; i < n; i++)
             {
-                pt1[i] = (Cv.GetSeqElem<CvSURFPoint>(objectKeypoints, ptpairs[i * 2])).Value.Pt;
-                pt2[i] = (Cv.GetSeqElem<CvSURFPoint>(imageKeypoints, ptpairs[i * 2 + 1])).Value.Pt;
+                pt1[i] = (Cv.GetSeqElem<CvSURFPoint>(objectKeypoints, ptPairs[i * 2])).Value.Pt;
+                pt2[i] = (Cv.GetSeqElem<CvSURFPoint>(imageKeypoints, ptPairs[i * 2 + 1])).Value.Pt;
+            }
+            using (CvMat pt1Mat = new CvMat(1, n, MatrixType.F32C2, pt1))
+            using (CvMat pt2Mat = new CvMat(1, n, MatrixType.F32C2, pt2))
+            { 
+                if (Cv.FindHomography(pt1Mat, pt2Mat, h, HomographyMethod.Ransac, 5) == 0) {
+                    // 透視変換行列が得られない場合は終了
+                    return null;
+                }
             }
 
-            CvMat pt1Mat = new CvMat(1, n, MatrixType.F32C2, pt1);
-            CvMat pt2Mat = new CvMat(1, n, MatrixType.F32C2, pt2);
-            if (Cv.FindHomography(pt1Mat, pt2Mat, h, HomographyMethod.Ransac, 5) == 0)
-                return null;
-
+            // 算出された3x3のホモグラフィ行列から座標値を求める
             CvPoint[] dstCorners = new CvPoint[4];
             for (int i = 0; i < 4; i++)
             {
+                // 元座標
                 double x = srcCorners[i].X;
                 double y = srcCorners[i].Y;
+                // スケール
                 double Z = 1.0 / (h[6] * x + h[7] * y + h[8]);
+                // 変換後の座標
                 double X = (h[0] * x + h[1] * y + h[2]) * Z;
                 double Y = (h[3] * x + h[4] * y + h[5]) * Z;
+
                 dstCorners[i] = new CvPoint(Cv.Round(X), Cv.Round(Y));
             }
 
             return dstCorners;
         }
     }
+
+    
 }

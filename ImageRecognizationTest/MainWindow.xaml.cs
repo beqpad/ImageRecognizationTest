@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -21,9 +20,35 @@ namespace ImageRecognizationTest
     /// </summary>
     public partial class MainWindow : Window
     {
+        private bool isDebug = false;
+        private String tmpTitle;
+
+
         public MainWindow()
         {
             InitializeComponent();
+        }
+
+
+
+        private void Window_KeyUp(object sender, KeyEventArgs e)
+        {
+            switch (e.Key)
+            {
+                case Key.F12:
+                    if (this.tmpTitle == null)
+                    {
+                        this.tmpTitle = this.Title;
+                    }
+
+                    // デバッグモード切替
+                    this.isDebug = !this.isDebug;
+
+                    this.Title = this.tmpTitle + (this.isDebug ? " (debug)" : "");
+                    break;
+                default:
+                    break;
+            }   
         }
 
 
@@ -52,8 +77,8 @@ namespace ImageRecognizationTest
 
         private IEnumerable<string> RecognizeImiage(string filePath)
         {
-            // TODO ここに、画像認識コードを入れてください。
-            yield return filePath + "\n" + WashTagRecognize.Recognize(filePath);
+            yield return filePath + "\n" + WashTagRecognize.Recognize(filePath, this.isDebug);
         }
+
     }
 }
