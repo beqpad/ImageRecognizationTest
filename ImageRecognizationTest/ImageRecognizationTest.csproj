@@ -186,6 +186,19 @@
     <Resource Include="answer\604.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Resource>
+    <Resource Include="answer\group\100.png" />
+    <Resource Include="answer\group\106.png" />
+    <Resource Include="answer\group\107.png" />
+    <Resource Include="answer\group\201.png" />
+    <Resource Include="answer\group\202.png" />
+    <Resource Include="answer\group\300.png" />
+    <Resource Include="answer\group\304.png" />
+    <Resource Include="answer\group\401.png" />
+    <Resource Include="answer\group\403.png" />
+    <Resource Include="answer\group\501.png" />
+    <Resource Include="answer\group\502.png" />
+    <Resource Include="answer\group\601.png" />
+    <Resource Include="answer\group\602.png" />
     <Content Include="lib\x64\OpenCV-2.4.5\opencv_calib3d245.dll" />
     <Content Include="lib\x64\OpenCV-2.4.5\opencv_calib3d245d.dll" />
     <Content Include="lib\x64\OpenCV-2.4.5\opencv_contrib245.dll" />

@@ -10,16 +10,19 @@ namespace ImageRecognizationTest
     static class WashTagRecognize
     {
         private static WashTagDictionary washTagDictionary = new WashTagDictionary();
+        private static WashTagGroupDictionary washTagGroupDictionary = new WashTagGroupDictionary();
 
         private class SURFResult
         {
             public List<CvSURFPoint> findPointList;
+            public List<CvSURFPoint> basePointList;
             public CvSize templateSize;
             public CvPoint[] dstCorners;
 
             public SURFResult()
             {
                 this.findPointList = new List<CvSURFPoint>();
+                this.basePointList = new List<CvSURFPoint>();
             }
         }
 
@@ -42,8 +45,12 @@ namespace ImageRecognizationTest
             {
                 // 1)検出前処理
                 
+                // ノイズ除去
+                src.Smooth(src, SmoothType.Median);
+                
                 // エッジ強調
-                src.UnsharpMasking(src, 3);
+                //src.UnsharpMasking(src, 3);
+
 
                 // 大津の手法による二値化処理
                 // 大津, "判別および最小２乗基準に基づく自動しきい値選定法", 電子通信学会論文誌, Vol.J63-D, No.4, pp.349-356, 1980. 
@@ -51,13 +58,13 @@ namespace ImageRecognizationTest
 
                 src.Dispose();
 
-                Dictionary<int, List<double>> shapeMatchResults = new Dictionary<int, List<double>>();
+                Dictionary<int, Dictionary<int, double>> shapeMatchResults = new Dictionary<int, Dictionary<int, double>>();
 
-                List<string> answerFileNames = washTagDictionary.Keys.ToList();
+                List<int> answerFileNames = washTagGroupDictionary.Keys.ToList();
                 foreach (var answerFileName in answerFileNames)
                 {
-                    var washTagInfo = washTagDictionary[answerFileName];
-                    var answerImagePath = String.Format(@"answer\{0}.png", answerFileName);
+                    //var washTagInfo = washTagDictionary[answerFileName];
+                    var answerImagePath = String.Format(@"answer\group\{0}.png", answerFileName);
 
                     // 2) 検出処理
                     var resultSURF = SURF(tmpImage, answerImagePath, isDebug);
@@ -81,56 +88,134 @@ namespace ImageRecognizationTest
                         CvSize roiSize = new CvSize(tmpImage.Width / 4, tmpImage.Width / 4);
 
                         List<double> matchResults = new List<double>();
-                        foreach (var findPoint in resultSURF.findPointList)
+                        for (int idx = 0; idx < resultSURF.findPointList.Count; idx++)
 	                    {
+                            var findPoint = resultSURF.findPointList[idx];
+                            var basePoint = resultSURF.basePointList[idx];
+                            //var offsetRetioX = basePoint.Pt.X / tmpImage.Width;
+                            //var offsetRatioY = basePoint.Pt.Y / tmpImage.Height;
+
                             // ROIを設定
                             tmpImage.SetROI(
-                                (int)findPoint.Pt.X - roiSize.Width / 2,
-                                (int)findPoint.Pt.Y - roiSize.Height / 2,
+                                (int)(findPoint.Pt.X - roiSize.Width / 2), //- roiSize.Width * offsetRetioX),
+                                (int)(findPoint.Pt.Y - roiSize.Height / 2), //- roiSize.Height * offsetRatioY),
                                 roiSize.Width, roiSize.Height
                             );
                 		    // Huモーメントによる形状マッチング [回転・スケーリング・反転に強い]
                             matchResults.Add(
-                                CompareShapeMoment(tmpImage, answerImagePath, MatchShapesMethod.I1)
+                                CompareShapeMoment(tmpImage, answerImagePath)
                             );
+
+
+
+                            //using (CvWindow win = new CvWindow("test", tmpImage))
+                            //{
+                            //    CvWindow.WaitKey();
+                            //}
+
                             // ROIをリセット
                             tmpImage.ResetROI();
 	                    }
 
                         
                         // 閾値以下だった場合に検出と見なす
-                        if (matchResults.Min() < 0.005)
+                        var resultMin = matchResults.Min();
+                        if (resultMin < 0.02)
                         {
+                            var catNo = (int)(answerFileName / 100);
+
                             // カテゴリに値が無ければ確保
-                            if (shapeMatchResults.ContainsKey(washTagInfo.CategoryNo) == false)
+                            if (shapeMatchResults.ContainsKey(catNo) == false)
                             {
-                                shapeMatchResults.Add(washTagInfo.CategoryNo, new List<double>());
+                                shapeMatchResults.Add(catNo, new Dictionary<int, double>());
                             }
 
-                            shapeMatchResults[washTagInfo.CategoryNo].Add(matchResults.Min());
+                            shapeMatchResults[catNo].Add(answerFileName, resultMin);
                         }
+
+                        Console.WriteLine("{0} : {1}", answerFileName, resultMin);
+
+                    }
+                    else
+                    {
+                        Console.WriteLine("{0} : {1}", answerFileName, -1);
                     }
                 }
 
 
-                // 4)認識結果の整理
+                // 4)検出結果の整理
                 foreach (var categoryNo in shapeMatchResults.Keys)
                 {
                     var matchResult = shapeMatchResults[categoryNo];
 
-                    var min = matchResult.Min();
-                    var index = matchResult.FindIndex((x) =>
+                    var min = matchResult.First<KeyValuePair<int, double>>((result) => result.Value == matchResult.Values.Min());
+                    
+                    var group = washTagGroupDictionary[min.Key];
+
+                    if (group.Length > 0)
                     {
-                        return x == min;
-                    });
+                        String id = null;
+                        String description = null;
+                        if (group.Length == 1)
+                        {
+                            // 1件の場合はそのままidとして用いる
+                            id = String.Format("{0}", group[0]);
+                            description = washTagDictionary[id].Description;
+                        }
+                        else
+                        {
+                            // 2件以上の場合は処理を切り替える
+                            switch (min.Key)
+                            {
+                                case 100: // 洗濯機による洗濯の場合
+                                    id = "101-105";
+                                    description = "表示された液温を上限に洗濯機による洗濯が出来る。";
+                                    break;
 
-                    var id = String.Format("{0:0}{1:00}", categoryNo, index + 1);
-                    var recognitionWashTag = washTagDictionary[id];
+                                case 300: // アイロン掛けの場合
+                                    id = "301-303";
+                                    description = "表示された温度でアイロン掛けが出来る。";
+                                    break;
 
-                    // 結果を格納
-                    results.Add(
-                        String.Format(isDebug ? "{0} : {1} ({2})" : "{0} : {1}", id, recognitionWashTag.Description, min)
-                    );
+                                case 401: // ドライ洗濯の場合
+                                    id = "401-402";
+                                    description = "ドライ洗濯が出来る。";
+                                    break;
+
+                                case 601: // 通常干し
+                                    id = "601, 603";
+                                    description = "つり干し、もしくは平干し。";
+                                    break;
+
+                                case 602: // 日陰干し
+                                    id = "602, 604";
+                                    description = "日陰のつり干し、もしくは日陰の平干し。";
+                                    break;
+
+                            }
+                        }
+
+                        if (id != null && description != null)
+                        {
+                            // 結果を格納
+                            results.Add(
+                                String.Format(isDebug ? "{0} : {1} ({2})" : "{0} : {1}", id, description, min.Value)
+                            );
+                        }
+                    }
+
+                    //var index = matchResult.FindIndex((x) =>
+                    //{
+                    //    return x == min;
+                    //});
+
+                    //var id = String.Format("{0:0}{1:00}", categoryNo, index + 1);
+                    //var recognitionWashTag = washTagDictionary[id];
+
+                    //// 結果を格納
+                    //results.Add(
+                    //    String.Format(isDebug ? "{0} : {1} ({2})" : "{0} : {1}", id, recognitionWashTag.Description, min)
+                    //);
                     
                 }
 
@@ -223,14 +308,14 @@ namespace ImageRecognizationTest
                         //CvSURFParams param = new CvSURFParams(20, true);
 
                         Cv.ExtractSURF(obj, null, out objectKeypoints, out objectDescriptors, storage, new CvSURFParams(20, true));
-                        Console.WriteLine("Object Descriptors: {0}", objectDescriptors.Total);
+                        //Console.WriteLine("Object Descriptors: {0}", objectDescriptors.Total);
 
                         Cv.ExtractSURF(image, null, out imageKeypoints, out imageDescriptors, storage, new CvSURFParams(20000, true));
-                        Console.WriteLine("Image Descriptors: {0}", imageDescriptors.Total);
+                        //Console.WriteLine("Image Descriptors: {0}", imageDescriptors.Total);
                     }
                 }
                 watch.Stop();
-                Console.WriteLine("Extraction time = {0}ms", watch.ElapsedMilliseconds);
+                //Console.WriteLine("Extraction time = {0}ms", watch.ElapsedMilliseconds);
                 watch.Reset();
                 watch.Start();
 
@@ -272,6 +357,7 @@ namespace ImageRecognizationTest
                     CvSURFPoint r2 = Cv.GetSeqElem<CvSURFPoint>(imageKeypoints, ptPairs[i + 1]).Value;
 
                     // 対応点を格納
+                    result.basePointList.Add(r1);
                     result.findPointList.Add(r2);
 
                     if (isDebug)
@@ -291,7 +377,7 @@ namespace ImageRecognizationTest
                 //}
 
                 watch.Stop();
-                Console.WriteLine("Drawing time = {0}ms", watch.ElapsedMilliseconds);
+                //Console.WriteLine("Drawing time = {0}ms", watch.ElapsedMilliseconds);
 
 
                 // ウィンドウに表示
@@ -322,7 +408,11 @@ namespace ImageRecognizationTest
 
             using (IplImage template = Cv.LoadImage(templateImagePath, LoadMode.GrayScale))
             {
-                result = Cv.MatchShapes(sourceImage, template, matchShapesMethod);
+                //result = Cv.MatchShapes(sourceImage, template, matchShapesMethod);
+
+                result = Cv.MatchShapes(sourceImage, template, MatchShapesMethod.I1)
+                    + Cv.MatchShapes(sourceImage, template, MatchShapesMethod.I2)
+                    + Cv.MatchShapes(sourceImage, template, MatchShapesMethod.I3);
             }
 
             return result;

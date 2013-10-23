@@ -45,4 +45,30 @@ namespace ImageRecognizationTest
             this.Add("604", new WashTagInfo() { CategoryNo = 6, No = 4, Description = "日陰の平干しがよい。" });
         }
     }
+
+
+    public class WashTagGroupDictionary : Dictionary<int, int[]>
+    {
+        public WashTagGroupDictionary()
+        {
+            this.Add(100, new int[] { 101, 102, 103, 104, 105 });
+            this.Add(106, new int[] { 106 });
+            this.Add(107, new int[] { 107 });
+
+            this.Add(201, new int[] { 201 });
+            this.Add(202, new int[] { 202 });
+
+            this.Add(300, new int[] { 301, 302, 303 });
+            this.Add(304, new int[] { 304 });
+
+            this.Add(401, new int[] { 401, 402 });
+            this.Add(403, new int[] { 403 });
+
+            this.Add(501, new int[] { 501 });
+            this.Add(502, new int[] { 502 });
+
+            this.Add(601, new int[] { 601, 603 });
+            this.Add(602, new int[] { 602, 604 });            
+        }
+    }
 }
